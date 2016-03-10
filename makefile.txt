@@ -1,0 +1,3 @@
+COMPONENT=Memo
+SENSORBOARD=basicsb
+include $(MAKERULES)
