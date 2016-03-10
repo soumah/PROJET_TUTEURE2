@@ -1,0 +1,64 @@
+#ifndef MEMO_H
+#define MEMO_H
+
+
+
+uint16_t K;         //c'est le nombre désiré de CH pour chaque round
+uint16_t N=20;      //le nombre de noeuds que l'utilisateur a introduit
+
+enum
+{    
+	
+	AM_MHMESSAGE = 250,
+	AM_MEMBRE = 200,
+	AM_ORGANISATION = 210,
+	AM_SLOT = 220,
+	AM_AGGREGATION = 230,
+	AM_SIMPLEMSG=50,
+	SINK_NODE = 0,
+	    
+    LEACH_ROUND_LENGTH = 100000,            // 7 minutes pour l'intervalle de temps de chaque round
+	LEACH_ANNONCE_LENGTH = 10000,           // 1 minutes qu'il attend le CH pour annocner qu'il est CH
+	LEACH_ORGANISATION_LENGTH = 4000,      // 40 seconde pour que chaque memebre renvoya au CH qu'il fera parti de son groupe
+	LEACH_SLOT_LENGTH=1000,                 // chaque 1 seconde un memebre envoie la donnée dans son slot
+	
+
+};
+
+typedef struct PUITS 
+
+{
+	uint16_t ID;                //l'identificateur de chaque noeud qui correspond à TOS_LOCAL_ADRESS 
+	uint8_t round;              //le round courant	
+	float probability;          //la probabilité que chaque noeud devienne CH	
+	uint16_t Depth;              //la profondeur du neoud dans le réseaux
+	
+}PUITS;
+typedef PUITS * PuitPtr;
+
+
+typedef struct MEMBRE
+
+{
+	uint16_t ID_MEMBRE;                //l'identificateur de chaque noeud qui correspond à TOS_LOCAL_ADRESS 
+	uint16_t ID_CH;  				   //l'identificateur du CH dont lequel appatiendra le noeud membre
+    uint16_t  volume;      			   //variable qui contient le volume  captée,
+	
+}MEMBRE;
+typedef MEMBRE * MembrePtr;
+
+
+typedef struct CLUSTER_HEAD
+
+{
+	uint16_t ID_MEMBRE;                //l'identificateur de chaque noeud qui correspond à TOS_LOCAL_ADRESS 
+	uint16_t ID_CH;  				   //l'identificateur du CH dont lequel appatiendra le noeud membre
+    uint16_t  donne_aggreger;      	   //la donnée aggreger à envoyer au noeud PUITS
+	uint16_t FREQ;                     //La fréquence avec laquelle les membre d'un memebre Cluster envoi
+    uint16_t  SLOT_ATTRIBUER;           //le slot attribuer à chaque membre
+	               
+}CLUSTER_HEAD;
+typedef CLUSTER_HEAD * ClusterHeadPtr;
+
+
+#endif /* MEMO_H */
