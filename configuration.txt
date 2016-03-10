@@ -1,0 +1,37 @@
+#include "Memo.h"
+configuration Memo{
+
+}
+
+implementation
+{ 
+  components Main, MemoM, GenericComm as Comm, TimerC, RandomLFSR,DemoSensorC as Sensor,LedsC;
+	
+	
+	Main.StdControl -> MemoM.StdControl;
+	Main.StdControl -> Comm.Control;
+	Main.StdControl -> TimerC.StdControl;
+    Main.StdControl ->Sensor;
+	MemoM.LEACH_ReceiveMsg -> Comm.ReceiveMsg[AM_MHMESSAGE];
+	MemoM.LEACH_SendMsg -> Comm.SendMsg[AM_MHMESSAGE];
+	MemoM.ANNONCE_ReceiveMsg -> Comm.ReceiveMsg[AM_MEMBRE];
+	MemoM.ANNONCE_SendMsg -> Comm.SendMsg[AM_MEMBRE];
+	MemoM.ORGANISATION_ReceiveMsg -> Comm.ReceiveMsg[AM_ORGANISATION];
+	MemoM.ORGANISATION_SendMsg -> Comm.SendMsg[AM_ORGANISATION];
+	MemoM.SLOT_ReceiveMsg -> Comm.ReceiveMsg[AM_SLOT];
+	MemoM.SLOT_SendMsg -> Comm.SendMsg[AM_SLOT];
+	MemoM.AGGREGATION_ReceiveMsg -> Comm.ReceiveMsg[AM_AGGREGATION];
+	MemoM.AGGREGATION_SendMsg-> Comm.SendMsg[AM_AGGREGATION];
+	MemoM.ADC->Sensor;
+    MemoM.Leds -> LedsC.Leds;
+	MemoM.ADCControl->Sensor;
+	MemoM.ReqRelayTimer -> TimerC.Timer[(uint8_t)unique("Timer")];
+	MemoM.RoundTimer -> TimerC.Timer[(uint8_t)unique("Timer")];		
+	MemoM.AnnonceTimer -> TimerC.Timer[(uint8_t)unique("Timer")];		
+	MemoM.OrganisationTimer -> TimerC.Timer[(uint8_t)unique("Timer")];		
+	MemoM.CaptureTimer -> TimerC.Timer[(uint8_t)unique("Timer")];
+	//MemoM.Timer -> TimerC.Timer[(uint8_t)unique("Timer")];
+	MemoM.Random-> RandomLFSR;	
+	MemoM.SendMsgData->Comm.SendMsg[AM_SIMPLEMSG];
+	MemoM.ReceiveMsgData->Comm.ReceiveMsg[AM_SIMPLEMSG];
+}
