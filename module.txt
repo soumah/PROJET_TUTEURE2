@@ -1,0 +1,520 @@
+#include "Memo.h"
+module MemoM{
+	provides
+	{
+		interface StdControl;
+		
+	}
+	uses
+	{
+	    interface ReceiveMsg as LEACH_ReceiveMsg;
+		interface SendMsg as LEACH_SendMsg;
+		interface ReceiveMsg as ANNONCE_ReceiveMsg;        //utiliser par les CH pour annaonce  aux noeud qu'ils son les chefs
+		interface SendMsg as ANNONCE_SendMsg;              //reception des noeuds membre des nouveau CH
+		interface ReceiveMsg as ORGANISATION_ReceiveMsg;   //reception des CH les msg de ses membres
+		interface SendMsg as ORGANISATION_SendMsg;         //envoie des noeuds aux CH auxquels ils compte appatenir
+		interface ReceiveMsg as SLOT_ReceiveMsg;           //RECEPTION DES MEMBRES  DES SLOTS
+		interface SendMsg as SLOT_SendMsg;                 //ENVOIE CH DES SLOTS
+		interface ReceiveMsg as AGGREGATION_ReceiveMsg;    //RECEPTION DU NOEUD PUITS LES DONNEES AGGREGER PAR LE CH
+		interface SendMsg as AGGREGATION_SendMsg;          //ENVOIE CH DU CH LES DONNEE AGGREGER AU NOEUD PUITS
+		interface SendMsg as SendMsgData;
+		interface ReceiveMsg as ReceiveMsgData;
+		
+		interface Timer as RoundTimer;           //Timer apres lequel le noeud PUITS annonce le nouveau round
+		interface Timer as ReqRelayTimer;        //Timer apres lequel les noeuds apres réception du nouveau round du PUITS le renvoie à leur voisins proche, ce dernier fera de meme
+	    interface Timer as AnnonceTimer;         //Timer apres lequel les noeuds annoncent qu'ils sont CH
+		interface Timer as OrganisationTimer;    //Timer apres lequel pour que un noeud membre prévienne son Chef qu'il va faire partie de son Cluster 
+		interface Timer as CaptureTimer;   //Timer pour  apres lequel les noeuds membr eenvoie leurs donnée pendant leurs SLOT attribuer par le CH
+	
+		//interface Timer;						 //Timer utiliser pour les LED lorsque les noeuds sont élu CH
+		interface ADC;
+		interface StdControl as ADCControl;
+		interface Random;
+		interface Leds;			
+	}
+}
+implementation{
+
+enum
+	{
+		ROUND_LENGTH = LEACH_ROUND_LENGTH,
+		ANNONCE_LENGTH = LEACH_ANNONCE_LENGTH,
+		ORGANISATION_LENGTH=LEACH_ORGANISATION_LENGTH,
+		SLOT_LENGTH=LEACH_SLOT_LENGTH,
+		
+	};
+
+
+
+bool recu=FALSE;                 //une fois que un noeud reçois le nouveau round il le transmet à son voisin puis il met sa variable à vrai pour qu'il sache qu'il a déjà reçu le début du round
+TOS_Msg buffer;                  //chaque noeud a un buffer dans lequelle il met le paquet avant de l'envoyer ou apres réception 
+bool isClusterHead;              //varaible pour indiquer si un noeud est un CH ou pas
+uint8_t r;                       //cette variable est utiliser que par le noeud PUITS pour incrémenter le round courant 
+int8_t rCH=-1;                   //cette variable est utiliser que pour les autres noeuds pour savoir dans quelle round ils sont apres reception du paquet
+float proba;                     //la probabilité qu'un noeud devienne CH utiliser par le noeud PUITS
+float probability;               //la probabilité qu'un noeud devienne CH utiliser par les autres noeuds
+uint16_t depth=0;                //variable indiquant la profondeur du noeud dans le réseaux sa remplacra la puissance du signal
+bool depth_recu=FALSE;           //cette variable sera à vrai une fois que le noeud connait sa profondeur comme sa il n'aura plus a la recalculer
+uint16_t Depth_CH_Init=0xff;     //elle sera utiliser pour prendre le CH le plus proche elle est initialiser à 255 puis à chaque fois qu'un CH arrive elle prend la valeur de la profondeur du CH                               
+uint16_t ID_CH_CHOISI;           //cette varaible contient l'ID du CH dans lequel un noeud membre décide d'appartenir
+
+bool round_CH;                   //cette variable nous permettra de savoir dans qu'elle round un noeud a été CH on aura besoin dans la phase 
+                                 //d'annonce pour que un CH dans son round ne reçoive pas les mesg des autres noeud CH
+						         //mais par contre il pourra les recevoir dans un autre round par d'autre CH car une fois qu'il n'est plus CH il doit appartenir a un CH
+
+uint16_t Table_Entree_Membre=0;  //c'est un entier qui calcul le nombre de Membre pour chaque CH
+//uint16_t Table_Membre_Reelle=0;  //C'est le nombre de membre réelle qui font partie d'un CH sont compter sous qui n'arrive pas à joindre le CH
+uint16_t da;	
+uint16_t a;
+//uint8_t nbre_conectiv=0;        //pour calculer le nombre de noeuds connectés
+uint16_t frequence;
+//bool etat= FALSE;
+//bool etat1=FALSE;
+
+static void init()
+	{
+	
+		if (TOS_LOCAL_ADDRESS == SINK_NODE)
+		{	
+			r=-1; 
+			K=(uint16_t)N*15/100;                      //le pourcentage de CH par round est de 0.1
+			if (K==0 ){K++;}
+			
+			depth_recu=TRUE;			
+			depth=0;
+	         	 
+			dbg(DBG_USR2,"je suis le PUITS, j'annonce le debut de la surveillance \n");	  
+		    dbg(DBG_USR2, " j'initialise le round à zéro\n");  
+			dbg(DBG_USR2,"le nbre de cluster head  desiré %i \n",K);	  
+		}
+	}
+	 
+	 
+static void Envoie()
+    { 
+     
+	if (TOS_LOCAL_ADDRESS == SINK_NODE)
+    
+	 {
+	  PuitPtr ptr;   
+	  recu=TRUE;	  	       
+	  r++;      
+	  proba=(float)K/(N-K*(r%(N/K))); 	        
+	  ptr=(PuitPtr)(buffer.data);
+      ptr->round=r; 
+	  ptr->probability=proba;
+	  ptr->ID=SINK_NODE;	  
+	  ptr->Depth=0;
+	  depth_recu=TRUE;	  
+	  
+	  call LEACH_SendMsg.send(TOS_BCAST_ADDR,sizeof(struct PUITS),&buffer);	 
+	  dbg(DBG_USR2, "je suis le noeud PUITS\n");	    	  
+	  dbg(DBG_USR2, "la probabilité  est  %g\n",proba);				 	 
+	  dbg(DBG_USR2, "la probabilitée que chaque noeud devienne CH dans ce round  est  %f\n",ptr->probability);				 	 	  	  
+	  dbg(DBG_USR2, "le round r est  %i\n",r);
+		    	  
+	  				 	  
+	  } 
+
+	}
+
+static void Envoie_MEMBRE_CH()
+    {
+
+     
+      MembrePtr	ptrM;
+	 ptrM = (MembrePtr)(buffer.data);
+	 ptrM->ID_MEMBRE=TOS_LOCAL_ADDRESS;
+	 ptrM->ID_CH=ID_CH_CHOISI;
+	
+	dbg(DBG_USR2, "je suis le noeud %i\n",TOS_LOCAL_ADDRESS);		
+	dbg(DBG_USR2, "je vais annoncer au CH %i que je suis membre de son Cluster\n",ID_CH_CHOISI);		
+	
+	 //call ORGANISATION_SendMsg.send(TOS_BCAST_ADDR,sizeof(struct MEMBRE),&buffer);
+       call ORGANISATION_SendMsg.send( ptrM->ID_CH=ID_CH_CHOISI,sizeof(struct MEMBRE),&buffer);    
+    }
+				
+
+command result_t StdControl.init()
+	{
+		init();
+	
+		call Random.init();	
+		call ADCControl.init();	
+		call Leds.init();	
+		return SUCCESS;
+
+	}
+
+
+command result_t StdControl.start()
+	{		
+		Envoie();
+		
+		if (TOS_LOCAL_ADDRESS == SINK_NODE)
+		{	
+			call RoundTimer.start(TIMER_REPEAT, ROUND_LENGTH);			
+		}
+		
+		return SUCCESS;		
+	}
+	
+
+command result_t StdControl.stop()
+	{
+		call RoundTimer.stop();
+		call ReqRelayTimer.stop();
+		call AnnonceTimer.stop();
+		//call Timer.stop();
+		call CaptureTimer.stop();
+		return SUCCESS;
+		
+	}
+		
+event TOS_MsgPtr LEACH_ReceiveMsg.receive(TOS_MsgPtr pmsg)
+    {	
+    PuitPtr ptr;
+    ptr = (PuitPtr)(pmsg->data); 
+ 
+	if (!depth_recu)  
+	{
+    
+	                         	 	 	 
+	//dbg(DBG_USR2, "=====Réception du noeud %i du déclenchement d'un nouveau round %i du noeud  %i====\n",TOS_LOCAL_ADDRESS,ptr->round,ptr->ID);	                                                	 	 	 
+	
+	depth=ptr->Depth+1;
+	depth_recu=TRUE;
+	//dbg(DBG_USR2, "Ma profondeur est  %i\n",depth);	                                              
+	}	
+	
+	if(rCH<ptr->round)
+	   {
+	     Depth_CH_Init=0xff;                           //a chaque nouveau round on initialise la profondeur initiale pour la comparer à celle des cluster head et prend la plus petite
+		 round_CH=FALSE;
+	     rCH=ptr->round;
+	     probability=ptr->probability;
+	     recu=FALSE;	 	     
+ 	   	                                               
+		if (rCH%(N/K)==0)                            //le round doit etre réinitialiser à zéro car il a atteint N/K round donc tous les CH doivent revenir à faux 
+		{isClusterHead=FALSE;
+		}
+	    }
+
+	
+	if ( (!recu) && (!isClusterHead) &&(TOS_LOCAL_ADDRESS != SINK_NODE)) 
+		{
+		 
+		 float randNo = (float)call Random.rand()/100000;			 
+		 
+		 recu=TRUE;		 
+		 
+		 call ReqRelayTimer.start(TIMER_ONE_SHOT,(call Random.rand())%800+200); //le nouveau round
+		// dbg(DBG_USR2,"je suis le noeuds %i je désire etre CH\n",TOS_LOCAL_ADDRESS);
+		 if (ptr->round%N/K==0){
+		 	isClusterHead=FALSE;}
+		 
+	     if ((randNo < ptr->probability) && (!isClusterHead))
+		 {		 		
+		 
+		// dbg(DBG_USR2,"Ma probability est inférieur je suis CH\n");
+		 isClusterHead=TRUE;
+		 round_CH=TRUE;
+		 
+	     }
+		
+		 if (isClusterHead)
+		 {
+		 	call Leds.greenOn();
+		 	call Leds.yellowOn();
+		 	call Leds.redOn();
+		 	
+		 			  // call Timer.start(TIMER_REPEAT, 1000); 
+		   call AnnonceTimer.start(TIMER_ONE_SHOT,ANNONCE_LENGTH+((call Random.rand())%800+200)); 
+		   frequence= (uint16_t) call Random.rand()/100;
+		  // dbg(DBG_USR2,"@@@@@@@@@@@@@@@@ \n");
+		   
+		 }
+		
+		}
+		
+      return pmsg;
+		
+	}		
+event result_t AnnonceTimer.fired() //je suis le clusterhead
+    {  
+			    
+		PuitPtr ptr;		
+		ptr = (PuitPtr)(buffer.data);
+		ptr->round=rCH;
+		ptr->probability=probability;		
+	    ptr->ID=TOS_LOCAL_ADDRESS;	  
+	 dbg(DBG_USR2,"je suis le noeuds %i j'annonce je suis le header\n",TOS_LOCAL_ADDRESS);	 	
+	    call ANNONCE_SendMsg.send(TOS_BCAST_ADDR,sizeof(struct PUITS),&buffer);
+		
+		return SUCCESS;
+    }	
+	
+	
+event TOS_MsgPtr ANNONCE_ReceiveMsg.receive(TOS_MsgPtr pmsg)
+    {
+	PuitPtr ptr;
+	 ptr = (PuitPtr)(pmsg->data); 
+	/*ptr = (PuitPtr)(buffer.data);
+		ptr->round=rCH;
+		ptr->probability=probability;		
+	    ptr->ID=TOS_LOCAL_ADDRESS;	  
+	atomic{  if(!etat) 
+	   call ANNONCE_SendMsg.send(TOS_BCAST_ADDR,sizeof(struct PUITS),&buffer);
+	   etat=TRUE;
+	   }*/
+	    if ((!round_CH)&&(TOS_LOCAL_ADDRESS!=SINK_NODE))       
+		{
+		                            	 	 	 
+	 dbg(DBG_USR2, "Réception de l'annonce du CH %i par le noeud %i\n",ptr->ID,TOS_LOCAL_ADDRESS);	                                                	 	 	 
+		 
+		 if(rCH<ptr->round)
+	      {
+	       Depth_CH_Init=0xff;  //le ch le plus proche
+		   rCH=ptr->round;
+          }		 
+		 
+		 if (ptr->Depth <= Depth_CH_Init)
+		 
+    		{
+		    
+			if(ptr->Depth == Depth_CH_Init)   //on va choisir aléatoirement le CH car leur profondeur est égale
+		    {
+			  
+			  uint16_t randNo = call Random.rand();			 
+			  if(randNo>45000)
+			  {
+			  ID_CH_CHOISI=ptr->ID;       
+		      }
+		    }
+		    else                              //dans le deuxieme cas ça veut dire que la profondeur est plus petite alors on choisie celui dont la profondeur est petite
+		    {
+		      ID_CH_CHOISI=ptr->ID;
+			 
+		    }		 
+		    
+			Depth_CH_Init=ptr->Depth;
+		   // dbg(DBG_USR2,"j'appartient au CH : %i \n",ID_CH_CHOISI);
+			//attentdre un certain temps avant d'annoncer au CH c'est le temps de traiter tous le CH auxquels un noeud peut appatenir
+			call OrganisationTimer.start(TIMER_ONE_SHOT,ANNONCE_LENGTH+((call Random.rand())%800+200)); 
+			                                                                                         
+			
+		}
+		 
+	}
+	
+      return pmsg;
+		
+	}		
+	
+event result_t OrganisationTimer.fired()
+	{		
+		Envoie_MEMBRE_CH();	// j'appartient a ton cluster	
+		return SUCCESS;	
+	}
+	
+	
+
+event TOS_MsgPtr ORGANISATION_ReceiveMsg.receive(TOS_MsgPtr pmsg)//reçu par le cluster head
+    {
+	  MembrePtr ptrM;
+	
+      ptrM = (MembrePtr)(pmsg->data);    							
+     if(ptrM->ID_CH==TOS_LOCAL_ADDRESS) 
+	 {
+	    
+		ClusterHeadPtr ptrCH;
+	    ptrCH = (ClusterHeadPtr)(buffer.data);	
+		ptrCH->ID_MEMBRE=ptrM->ID_MEMBRE;
+		ptrCH->ID_CH=TOS_LOCAL_ADDRESS;
+		Table_Entree_Membre=Table_Entree_Membre+1;
+		ptrCH->SLOT_ATTRIBUER=Table_Entree_Membre;// le numero de noeud dans le cluster
+		ptrCH->FREQ= frequence;
+		//dbg(DBG_USR2,"il enverra les données avec un code CDMA de %i \n",ptrCH->FREQ);		
+	dbg(DBG_USR2, "Je suis le  CH %i j'ai reçu la demande d'admission du noeud %i \n",ptrM->ID_CH,ptrM->ID_MEMBRE);	                                                	 	 	 
+	dbg(DBG_USR2,"je suis le CH %i, le noeud %i est l'un de mes membres,j'ai %i membre\n",ptrM->ID_CH,ptrM->ID_MEMBRE,Table_Entree_Membre);	
+		call SLOT_SendMsg.send(ptrCH->ID_MEMBRE,sizeof(struct CLUSTER_HEAD),&buffer);
+		 
+	 }
+	 return pmsg;
+		
+	}		
+	
+event TOS_MsgPtr SLOT_ReceiveMsg.receive(TOS_MsgPtr pmsg)
+    {
+    	ClusterHeadPtr ptrCH;
+	  ptrCH= (ClusterHeadPtr)(pmsg->data);    							
+      	  
+	  if(ptrCH->ID_MEMBRE==TOS_LOCAL_ADDRESS)
+	  {
+	  	 	 	 
+	 // dbg(DBG_USR2, "je suis le noeud %i, j'ai reçu le slot du CH %i\n",TOS_LOCAL_ADDRESS,ptrCH->ID_CH);	                                                	 	 	 
+	 // dbg(DBG_USR2,"mon slot est de  %i \n",ptrCH->SLOT_ATTRIBUER);
+	  call CaptureTimer.start(TIMER_REPEAT,((ptrCH->SLOT_ATTRIBUER)*(SLOT_LENGTH))+ptrCH->FREQ); 	      
+	    
+	 }
+	 return pmsg;		
+	}		
+event result_t CaptureTimer.fired()
+	{ 
+	//if(TOS_LOCAL_ADDRESS!=0){
+		call ADC.getData();//}
+		return SUCCESS;	
+	}	
+async event result_t ADC.dataReady(uint16_t donne){
+	MembrePtr ptr;
+	ptr=(MembrePtr)(buffer.data);
+	ptr->ID_MEMBRE=TOS_LOCAL_ADDRESS;
+	ptr->ID_CH=ID_CH_CHOISI;
+    ptr->volume=donne;
+   if(donne>=100){
+    if(donne%2==0){
+		 dbg(DBG_USR2,"Je suis le noeud N° %d,j'ai capté la valeur V= %d,je l'envoie a mon CH N° %d \n",TOS_LOCAL_ADDRESS,donne,ID_CH_CHOISI);
+			 call SendMsgData.send(ptr->ID_CH=ID_CH_CHOISI,sizeof( struct MEMBRE),&buffer);
+			// call Leds.greenOn();
+		if(donne<=400){
+			
+			call Leds.greenToggle();
+			}
+			else{
+				if(donne>800){
+					
+			        call Leds.yellowToggle();
+					}
+					else{
+						
+			call Leds.redToggle();
+						}
+				}
+				}
+				}
+	return SUCCESS;
+}		
+event TOS_MsgPtr ReceiveMsgData.receive(TOS_MsgPtr pmsg)//la valeur est reçu par le cluster head
+    {
+     MembrePtr ptr;
+	
+      ptr = (MembrePtr)(pmsg->data);    					
+     if(ptr->ID_CH==TOS_LOCAL_ADDRESS) 
+     { 
+     	ClusterHeadPtr ptrCH;
+     	a=ptr->volume;
+     	ptrCH = (ClusterHeadPtr)(buffer.data);	
+		ptrCH->ID_CH=TOS_LOCAL_ADDRESS;
+		ptrCH->donne_aggreger=a;
+     	dbg(DBG_USR2, "Je suis le CH N°%i,j'ai reçu la valeur V=  %i, du membre N°%i \n",ptr->ID_CH,ptr->volume,ptr->ID_MEMBRE);	
+    call  AGGREGATION_SendMsg.send(SINK_NODE,sizeof(struct CLUSTER_HEAD),&buffer);
+     }	
+   return pmsg; 	
+    }	
+event TOS_MsgPtr AGGREGATION_ReceiveMsg.receive(TOS_MsgPtr pmsg)
+    {
+	 
+	    if(TOS_LOCAL_ADDRESS==SINK_NODE)
+		{	    
+	    ClusterHeadPtr ptrCH;
+		ptrCH = (ClusterHeadPtr)(pmsg->data);   
+		dbg(DBG_USR2, "Je suis noeud PUITS, j'ai reçu la valeur %i, du CH %i\n",ptrCH->donne_aggreger,ptrCH->ID_CH);	                                                	 	 	 
+	 da = ptrCH->donne_aggreger; 	
+        
+		atomic{
+		
+		if(da<=400){
+			dbg(DBG_USR2,"presence d'un animal\n");
+			call Leds.greenToggle();
+			}
+			else{
+				if(da>801){
+					dbg(DBG_USR2,"presence d'un vehicule\n");
+			        call Leds.yellowToggle();
+					}
+					else{
+						dbg(DBG_USR2,"presence d'un humain\n");
+			call Leds.redToggle();
+						}
+				}
+				}
+				
+				}
+		
+
+	 return pmsg;
+		
+	}		
+		
+		
+event result_t ReqRelayTimer.fired() 
+    {
+		PuitPtr ptr;	
+		ptr = (PuitPtr)(buffer.data);
+		ptr->round=rCH;
+		ptr->probability=probability;		
+	    ptr->ID=TOS_LOCAL_ADDRESS;	  	
+		ptr->Depth=depth;
+		call LEACH_SendMsg.send(TOS_BCAST_ADDR,sizeof(struct PUITS),&buffer);
+
+		return SUCCESS;
+    }
+
+/*event result_t Timer.fired()
+  {	
+    atomic
+	  { 
+		  
+        call Leds.redToggle();
+ 	  }		
+    return SUCCESS;
+  }*/
+	
+
+event result_t RoundTimer.fired()
+	{
+		call Leds.greenOff();
+		call Leds.redOff();
+		call Leds.yellowOff();
+		dbg(DBG_USR2, "le round est fini\n");		
+		dbg(DBG_USR2, "déclenchement d'un nouveau round\n");		
+		Envoie();
+		return SUCCESS;	
+	}
+
+	
+	
+event result_t LEACH_SendMsg.sendDone(TOS_MsgPtr msg, result_t success)
+    {
+        return SUCCESS;
+    }
+
+event result_t ANNONCE_SendMsg.sendDone(TOS_MsgPtr msg, result_t success)
+    {
+        return SUCCESS;
+    }
+
+event result_t ORGANISATION_SendMsg.sendDone(TOS_MsgPtr msg, result_t success)
+    {
+        return SUCCESS;
+    }
+
+event result_t SLOT_SendMsg.sendDone(TOS_MsgPtr msg, result_t success)
+    {
+        return SUCCESS;
+    }
+
+event result_t AGGREGATION_SendMsg.sendDone(TOS_MsgPtr msg, result_t success)
+    {
+        return SUCCESS;
+    }
+
+event result_t SendMsgData.sendDone(TOS_MsgPtr msg, result_t success)
+    {
+        return SUCCESS;
+    }
+	
+	
+
+	
+}
