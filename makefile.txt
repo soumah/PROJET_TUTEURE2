@@ -4,3 +4,5 @@ include $(MAKERULES)
 
 
 //ce fichier permet de créer de compiler et de creer l'exexutable
+
+// bonjour à tout le monde c'est mon fichier
