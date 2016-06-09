@@ -1,3 +1,6 @@
 COMPONENT=Memo
 SENSORBOARD=basicsb
 include $(MAKERULES)
+
+
+//ce fichier permet de créer de compiler et de creer l'exexutable
